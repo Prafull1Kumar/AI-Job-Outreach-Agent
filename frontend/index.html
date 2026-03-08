@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Job Outreach Agent</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>AI Job Outreach Agent</h1>
+      <p class="subtitle">Generate recruiter-personalized outreach emails with LLM + RAG hooks.</p>
+
+      <form id="outreach-form">
+        <label>Recruiter Name</label>
+        <input id="recruiter_name" required />
+
+        <label>Recruiter Email</label>
+        <input id="recruiter_email" type="email" required />
+
+        <label>Recruiter Profile (LinkedIn summary, notes, etc.)</label>
+        <textarea id="recruiter_profile" rows="4" required></textarea>
+
+        <label>Job Description</label>
+        <textarea id="job_description" rows="7" required></textarea>
+
+        <label>Resume Text</label>
+        <textarea id="resume_text" rows="8" required></textarea>
+
+        <div class="actions">
+          <button type="button" id="btn-parse">Parse Job</button>
+          <button type="button" id="btn-draft">Draft Email</button>
+          <button type="button" id="btn-send">Send Email</button>
+        </div>
+      </form>
+
+      <section>
+        <h2>Output</h2>
+        <pre id="output">Run an action to see results...</pre>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
