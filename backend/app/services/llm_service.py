@@ -1,9 +1,12 @@
 from app.schemas import DraftEmailResponse, EvidenceItem, ParsedJob
-from typing import List
+from typing import List, Optional
 import re
 
 
-def parse_job_description(job_description: str) -> ParsedJob:
+def parse_job_description(
+    job_description: str,
+    extracted_keywords: Optional[List[str]] = None,
+) -> ParsedJob:
     """
     Parse role/company/requirements from JD.
 
@@ -28,6 +31,12 @@ def parse_job_description(job_description: str) -> ParsedJob:
         "embeddings",
     ]
     key_requirements = [k for k in req_keywords if k in job_description.lower()]
+    if extracted_keywords:
+        for keyword in extracted_keywords:
+            if keyword not in key_requirements:
+                key_requirements.append(keyword)
+            if len(key_requirements) >= 10:
+                break
 
     seniority = "Mid/Senior" if "senior" in job_description.lower() else "Mid"
 

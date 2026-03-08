@@ -5,6 +5,7 @@ Full-stack starter for an agent-based outreach workflow:
 - Retrieve resume evidence (RAG hook)
 - Draft personalized recruiter emails (LLM hook)
 - Send emails via Gmail
+- Upload resume files (`.pdf`, `.docx`, `.txt`) instead of pasting full resume text
 
 ## Project Structure
 
@@ -19,7 +20,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
 ## Frontend Setup
@@ -32,6 +33,12 @@ python3 -m http.server 3000
 ```
 
 Then open: `http://localhost:3000`
+
+## Resume Upload
+
+- Use the `Upload Resume` field for `.pdf`, `.docx`, or `.txt`
+- `Resume Text` is optional fallback if no file is uploaded
+- Draft/Send actions use multipart upload endpoints on backend
 
 ## LLM + RAG Implementation Points
 

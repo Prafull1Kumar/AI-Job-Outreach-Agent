@@ -21,13 +21,20 @@
         <label>Recruiter Profile (LinkedIn summary, notes, etc.)</label>
         <textarea id="recruiter_profile" rows="4" required></textarea>
 
-        <label>Job Description</label>
-        <textarea id="job_description" rows="7" required></textarea>
+        <label>Job Link (optional if Job Description is provided)</label>
+        <input id="job_link" type="url" placeholder="https://careers.company.com/job/123" />
 
-        <label>Resume Text</label>
-        <textarea id="resume_text" rows="8" required></textarea>
+        <label>Job Description (optional if Job Link is provided)</label>
+        <textarea id="job_description" rows="7"></textarea>
+
+        <label>Upload Resume (.pdf, .docx, .txt)</label>
+        <input id="resume_file" type="file" accept=".pdf,.docx,.txt" />
+
+        <label>Resume Text (optional fallback if no file uploaded)</label>
+        <textarea id="resume_text" rows="8"></textarea>
 
         <div class="actions">
+          <button type="button" id="btn-keywords">Extract Keywords</button>
           <button type="button" id="btn-parse">Parse Job</button>
           <button type="button" id="btn-draft">Draft Email</button>
           <button type="button" id="btn-send">Send Email</button>
