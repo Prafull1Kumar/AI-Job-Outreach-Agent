@@ -20,11 +20,7 @@ def parse_job_description(
     TODO(LLM): Replace heuristics with an LLM structured extraction call.
     Suggested output schema: {role, company, key_requirements[], seniority}
     """
-    lines = [line.strip() for line in job_description.splitlines() if line.strip()]
-    role = lines[0] if lines else "Unknown Role"
-
-    company_match = re.search(r"at\s+([A-Z][A-Za-z0-9&\-\s]+)", job_description)
-    company = company_match.group(1).strip() if company_match else "Target Company"
+    role, company = _extract_role_and_company(job_description)
 
     req_keywords = [
         "python",
@@ -55,6 +51,39 @@ def parse_job_description(
     )
 
 
+def _extract_role_and_company(job_description: str) -> tuple[str, str]:
+    normalized = re.sub(r"\s+", " ", job_description).strip()
+
+    patterns = [
+        r"Job Application for\s+(?P<role>.+?)\s+at\s+(?P<company>[A-Z][A-Za-z0-9&.\- ]+)",
+        r"(?P<role>[A-Z][A-Za-z0-9/&,\-+() ]+?)\s*@\s*(?P<company>[A-Z][A-Za-z0-9&.\- ]+)",
+        r"(?P<role>[A-Z][A-Za-z0-9/&,\-+() ]+?)\s+-\s+(?P<company>[A-Z][A-Za-z0-9&.\- ]+)",
+        r"(?P<role>[A-Z][A-Za-z0-9/&,\-+() ]+?)\s+at\s+(?P<company>[A-Z][A-Za-z0-9&.\- ]+)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if match:
+            role = _clean_title_fragment(match.group("role"))
+            company = _clean_title_fragment(match.group("company"))
+            if role and company:
+                return role, company
+
+    lines = [line.strip() for line in job_description.splitlines() if line.strip()]
+    first_line = _clean_title_fragment(lines[0]) if lines else ""
+    fallback_role = first_line or "Software Engineer"
+    return fallback_role, "Target Company"
+
+
+def _clean_title_fragment(value: str) -> str:
+    cleaned = value.strip()
+    cleaned = re.sub(r"^(width=device-width.*?|viewport.*?)\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^(?:[A-Za-z0-9_-]{20,}\s+)+", "", cleaned)
+    cleaned = re.sub(r"\s*(COMPANY DESCRIPTION|ROLE DESCRIPTION|REQUIREMENTS).*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip(" -,:;|")
+
+
 def draft_outreach_email(
     recruiter_name: str,
     recruiter_profile: str,
@@ -71,27 +100,11 @@ def draft_outreach_email(
     - retrieved resume evidence
     - strict style constraints (concise, professional, personalized)
     """
-    evidence_lines = "\n".join(
-        [f"- {item.snippet[:140]}..." for item in evidence[:3]]
+    subject, body = _build_dummy_outreach_email(
+        recruiter_name=recruiter_name,
+        recruiter_profile=recruiter_profile,
+        parsed_job=parsed_job,
     )
-
-    subject = f"Interest in {parsed_job.role} - Relevant LLM/RAG Experience"
-
-    body = f"""Hi {recruiter_name},
-
-I came across the {parsed_job.role} opportunity at {parsed_job.company} and wanted to reach out directly.
-Your background ({recruiter_profile[:120]}...) stood out, and I believe my recent work aligns strongly with this role.
-
-Highlights from my experience relevant to your requirements:
-{evidence_lines}
-
-I recently built an AI Job Outreach Agent using FastAPI, LLM workflows, and retrieval-based grounding, and would value the chance to discuss how I can contribute to your team.
-
-Would you be open to a short conversation this week?
-
-Best regards,
-Your Name
-"""
 
     return DraftEmailResponse(
         subject=subject,
@@ -99,6 +112,44 @@ Your Name
         evidence_used=evidence,
         job_summary_prompt=job_summary_prompt,
     )
+
+
+def _build_dummy_outreach_email(
+    recruiter_name: str,
+    recruiter_profile: str,
+    parsed_job: ParsedJob,
+) -> tuple[str, str]:
+    greeting = recruiter_name.strip() if recruiter_name.strip() else "Hiring Team"
+    profile_hint = recruiter_profile[:120].strip()
+    company = parsed_job.company.strip() if parsed_job.company.strip() else "your team"
+    intro_line = (
+        f"I recently came across the {parsed_job.role} opportunity at {company} and was excited to learn more "
+        "about your mission and the impact of your engineering team."
+    )
+    if profile_hint:
+        intro_line += f" Your background ({profile_hint}...) also stood out to me."
+
+    subject = f"Application for {parsed_job.role} Role at {company}"
+    body = f"""Hi {greeting},
+
+I hope you are doing well.
+
+{intro_line} The opportunity to contribute to scalable, reliable systems in this role is especially compelling.
+
+I have 5+ years of experience building scalable backend and full-stack applications, working with technologies such as Python, Node.js, React, TypeScript, APIs, distributed systems, and cloud-based workflows. In my recent roles and projects, I have built AI-powered systems, high-volume application workflows, data pipelines, and external integrations. I am currently pursuing my Master's in Computer Science at The University of Texas at Dallas, where I continue working on AI-driven and distributed systems projects.
+
+I would welcome the opportunity to contribute to {company}. My resume is attached, and I would be glad to discuss how my background could be a strong fit for the team.
+
+Thank you for your time and consideration.
+
+Best regards,
+Prafull Kumar Prajapati
+Richardson, TX
+prajapatiprafull12@gmail.com
++1 (945) 268-5954
+"""
+
+    return subject, body
 
 
 def summarize_job_for_email_prompt(

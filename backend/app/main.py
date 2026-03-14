@@ -38,6 +38,16 @@ app.add_middleware(
 )
 
 
+def _resolve_current_email(
+    provided_subject: Optional[str],
+    provided_body: Optional[str],
+    generated_draft: DraftEmailResponse,
+) -> tuple[str, str]:
+    subject = (provided_subject or "").strip() or generated_draft.subject
+    body = (provided_body or "").strip() or generated_draft.body
+    return subject, body
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -143,8 +153,9 @@ def send_email(payload: JobOutreachRequest) -> SendEmailResponse:
         evidence=evidence,
         job_summary_prompt=job_summary.email_generation_prompt,
     )
+    subject, body = _resolve_current_email(payload.email_subject, payload.email_body, draft)
 
-    return send_email_via_gmail(payload.recruiter_email, draft.subject, draft.body)
+    return send_email_via_gmail(payload.recruiter_email, subject, body)
 
 
 @app.post("/draft-email-upload", response_model=DraftEmailResponse)
@@ -154,6 +165,8 @@ def draft_email_upload(
     job_description: str = Form(""),
     job_link: str = Form(""),
     resume_text: str = Form(""),
+    email_subject: str = Form(""),
+    email_body: str = Form(""),
     resume_file: Optional[UploadFile] = File(None),
 ) -> DraftEmailResponse:
     try:
@@ -174,12 +187,19 @@ def draft_email_upload(
     retrieval_query = f"{parsed.role} {' '.join(parsed.key_requirements)} {recruiter_profile}"
     evidence = retrieve_resume_evidence(retrieval_query, final_resume_text)
 
-    return draft_outreach_email(
+    draft = draft_outreach_email(
         recruiter_name=recruiter_name,
         recruiter_profile=recruiter_profile,
         parsed_job=parsed,
         evidence=evidence,
         job_summary_prompt=job_summary.email_generation_prompt,
+    )
+    subject, body = _resolve_current_email(email_subject, email_body, draft)
+    return DraftEmailResponse(
+        subject=subject,
+        body=body,
+        evidence_used=draft.evidence_used,
+        job_summary_prompt=draft.job_summary_prompt,
     )
 
 
@@ -191,6 +211,8 @@ def send_email_upload(
     job_description: str = Form(""),
     job_link: str = Form(""),
     resume_text: str = Form(""),
+    email_subject: str = Form(""),
+    email_body: str = Form(""),
     resume_file: Optional[UploadFile] = File(None),
 ) -> SendEmailResponse:
     try:
@@ -218,4 +240,5 @@ def send_email_upload(
         evidence=evidence,
         job_summary_prompt=job_summary.email_generation_prompt,
     )
-    return send_email_via_gmail(recruiter_email, draft.subject, draft.body)
+    subject, body = _resolve_current_email(email_subject, email_body, draft)
+    return send_email_via_gmail(recruiter_email, subject, body)

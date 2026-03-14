@@ -21,6 +21,8 @@ class JobOutreachRequest(JobContentRequest):
     recruiter_email: EmailStr
     recruiter_profile: str = Field(..., min_length=20)
     resume_text: str = Field(..., min_length=50)
+    email_subject: Optional[str] = None
+    email_body: Optional[str] = None
 
 
 class ParsedJob(BaseModel):
