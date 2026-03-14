@@ -10,11 +10,16 @@ from app.schemas import (
     JobContentRequest,
     JobExtractionResponse,
     JobOutreachRequest,
+    JobSummaryResponse,
     ParsedJob,
     SendEmailResponse,
 )
-from app.services.job_service import resolve_job_text_and_keywords
-from app.services.llm_service import draft_outreach_email, parse_job_description
+from app.services.job_service import resolve_job_summary_input, resolve_job_text_and_keywords
+from app.services.llm_service import (
+    draft_outreach_email,
+    parse_job_description,
+    summarize_job_for_email_prompt,
+)
 from app.services.outreach_service import send_email_via_gmail
 from app.services.rag_service import retrieve_resume_evidence
 from app.services.resume_service import resolve_resume_text
@@ -65,13 +70,34 @@ def extract_keywords(payload: JobContentRequest) -> JobExtractionResponse:
         source=source,
         keyword_count=len(extracted_keywords),
         extracted_keywords=extracted_keywords,
-        resolved_job_description_preview=job_text[:500],
+        resolved_job_description_preview=job_text,
     )
+
+
+@app.post("/summarize-job", response_model=JobSummaryResponse)
+def summarize_job(payload: JobContentRequest) -> JobSummaryResponse:
+    try:
+        job_summary_input = resolve_job_summary_input(
+            payload.job_description,
+            str(payload.job_link) if payload.job_link else None,
+        )
+        job_text, extracted_keywords = resolve_job_text_and_keywords(
+            payload.job_description,
+            str(payload.job_link) if payload.job_link else None,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return summarize_job_for_email_prompt(job_summary_input, extracted_keywords)
 
 
 @app.post("/draft-email", response_model=DraftEmailResponse)
 def draft_email(payload: JobOutreachRequest) -> DraftEmailResponse:
     try:
+        job_summary_input = resolve_job_summary_input(
+            payload.job_description,
+            str(payload.job_link) if payload.job_link else None,
+        )
         job_text, extracted_keywords = resolve_job_text_and_keywords(
             payload.job_description,
             str(payload.job_link) if payload.job_link else None,
@@ -80,6 +106,7 @@ def draft_email(payload: JobOutreachRequest) -> DraftEmailResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     parsed = parse_job_description(job_text, extracted_keywords=extracted_keywords)
+    job_summary = summarize_job_for_email_prompt(job_summary_input, extracted_keywords)
     retrieval_query = f"{parsed.role} {' '.join(parsed.key_requirements)} {payload.recruiter_profile}"
     evidence = retrieve_resume_evidence(retrieval_query, payload.resume_text)
     return draft_outreach_email(
@@ -87,12 +114,17 @@ def draft_email(payload: JobOutreachRequest) -> DraftEmailResponse:
         recruiter_profile=payload.recruiter_profile,
         parsed_job=parsed,
         evidence=evidence,
+        job_summary_prompt=job_summary.email_generation_prompt,
     )
 
 
 @app.post("/send-email", response_model=SendEmailResponse)
 def send_email(payload: JobOutreachRequest) -> SendEmailResponse:
     try:
+        job_summary_input = resolve_job_summary_input(
+            payload.job_description,
+            str(payload.job_link) if payload.job_link else None,
+        )
         job_text, extracted_keywords = resolve_job_text_and_keywords(
             payload.job_description,
             str(payload.job_link) if payload.job_link else None,
@@ -101,6 +133,7 @@ def send_email(payload: JobOutreachRequest) -> SendEmailResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     parsed = parse_job_description(job_text, extracted_keywords=extracted_keywords)
+    job_summary = summarize_job_for_email_prompt(job_summary_input, extracted_keywords)
     retrieval_query = f"{parsed.role} {' '.join(parsed.key_requirements)} {payload.recruiter_profile}"
     evidence = retrieve_resume_evidence(retrieval_query, payload.resume_text)
     draft = draft_outreach_email(
@@ -108,6 +141,7 @@ def send_email(payload: JobOutreachRequest) -> SendEmailResponse:
         recruiter_profile=payload.recruiter_profile,
         parsed_job=parsed,
         evidence=evidence,
+        job_summary_prompt=job_summary.email_generation_prompt,
     )
 
     return send_email_via_gmail(payload.recruiter_email, draft.subject, draft.body)
@@ -124,6 +158,10 @@ def draft_email_upload(
 ) -> DraftEmailResponse:
     try:
         final_resume_text = resolve_resume_text(resume_text, resume_file)
+        job_summary_input = resolve_job_summary_input(
+            job_description or None,
+            job_link or None,
+        )
         final_job_text, extracted_keywords = resolve_job_text_and_keywords(
             job_description or None,
             job_link or None,
@@ -132,6 +170,7 @@ def draft_email_upload(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     parsed = parse_job_description(final_job_text, extracted_keywords=extracted_keywords)
+    job_summary = summarize_job_for_email_prompt(job_summary_input, extracted_keywords)
     retrieval_query = f"{parsed.role} {' '.join(parsed.key_requirements)} {recruiter_profile}"
     evidence = retrieve_resume_evidence(retrieval_query, final_resume_text)
 
@@ -140,6 +179,7 @@ def draft_email_upload(
         recruiter_profile=recruiter_profile,
         parsed_job=parsed,
         evidence=evidence,
+        job_summary_prompt=job_summary.email_generation_prompt,
     )
 
 
@@ -155,6 +195,10 @@ def send_email_upload(
 ) -> SendEmailResponse:
     try:
         final_resume_text = resolve_resume_text(resume_text, resume_file)
+        job_summary_input = resolve_job_summary_input(
+            job_description or None,
+            job_link or None,
+        )
         final_job_text, extracted_keywords = resolve_job_text_and_keywords(
             job_description or None,
             job_link or None,
@@ -163,6 +207,7 @@ def send_email_upload(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     parsed = parse_job_description(final_job_text, extracted_keywords=extracted_keywords)
+    job_summary = summarize_job_for_email_prompt(job_summary_input, extracted_keywords)
     retrieval_query = f"{parsed.role} {' '.join(parsed.key_requirements)} {recruiter_profile}"
     evidence = retrieve_resume_evidence(retrieval_query, final_resume_text)
 
@@ -171,5 +216,6 @@ def send_email_upload(
         recruiter_profile=recruiter_profile,
         parsed_job=parsed,
         evidence=evidence,
+        job_summary_prompt=job_summary.email_generation_prompt,
     )
     return send_email_via_gmail(recruiter_email, draft.subject, draft.body)

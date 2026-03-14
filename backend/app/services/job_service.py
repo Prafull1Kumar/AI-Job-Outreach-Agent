@@ -1,4 +1,5 @@
 from functools import lru_cache
+from html import unescape
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import csv
@@ -254,20 +255,107 @@ def fetch_job_text_from_url(job_link: str, timeout_sec: int = 10) -> str:
     TODO(LLM): If page structure is complex, replace this with an LLM extraction
     strategy over page HTML to reliably isolate role/company/requirements.
     """
+    return _extract_all_text_from_html(fetch_job_html_from_url(job_link, timeout_sec=timeout_sec))
+
+
+def fetch_job_html_from_url(job_link: str, timeout_sec: int = 10) -> str:
     response = requests.get(
         job_link,
         timeout=timeout_sec,
         headers={"User-Agent": "Mozilla/5.0"},
     )
     response.raise_for_status()
+    return response.text
 
-    soup = BeautifulSoup(response.text, "html.parser")
 
-    for tag in soup(["script", "style", "noscript", "form", "input", "button", "select", "option", "label"]):
-        tag.decompose()
+def _html_fragment_to_text(fragment: str) -> str:
+    parsed = BeautifulSoup(unescape(fragment), "html.parser")
+    return _normalize_space(parsed.get_text(separator=" "))
 
-    text = " ".join(soup.get_text(separator=" ").split())
-    return text
+
+def _collect_text_from_json_value(value: object, texts: List[str]) -> None:
+    if isinstance(value, str):
+        normalized = _html_fragment_to_text(value)
+        if normalized:
+            texts.append(normalized)
+        return
+
+    if isinstance(value, list):
+        for item in value:
+            _collect_text_from_json_value(item, texts)
+        return
+
+    if isinstance(value, dict):
+        for item in value.values():
+            _collect_text_from_json_value(item, texts)
+
+
+def _extract_structured_job_text(soup: BeautifulSoup) -> str:
+    texts: List[str] = []
+
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        items = payload if isinstance(payload, list) else [payload]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("@type", "")).lower()
+            if item_type != "jobposting":
+                continue
+
+            title = str(item.get("title", "")).strip()
+            description = _html_fragment_to_text(str(item.get("description", "")))
+            if title:
+                texts.append(title)
+            if description:
+                texts.append(description)
+
+    for meta_name in ["description", "og:description", "twitter:description"]:
+        meta = soup.find("meta", attrs={"name": meta_name}) or soup.find("meta", attrs={"property": meta_name})
+        if meta and meta.get("content"):
+            texts.append(_normalize_space(str(meta["content"])))
+
+    combined = _normalize_space(" ".join(part for part in texts if part))
+    return combined
+
+
+def _extract_all_text_from_html(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    texts: List[str] = []
+
+    for meta in soup.find_all("meta"):
+        content = meta.get("content")
+        if content:
+            texts.append(_html_fragment_to_text(str(content)))
+
+    for script in soup.find_all("script"):
+        script_text = script.string or script.get_text()
+        if script_text:
+            script_type = (script.get("type") or "").lower()
+            if "json" in script_type:
+                try:
+                    payload = json.loads(script_text)
+                except json.JSONDecodeError:
+                    cleaned_script = _html_fragment_to_text(script_text)
+                    if cleaned_script:
+                        texts.append(cleaned_script)
+                else:
+                    _collect_text_from_json_value(payload, texts)
+
+    for node in soup.find_all(string=True):
+        value = _normalize_space(str(node))
+        if value:
+            texts.append(value)
+
+    combined = _normalize_space(" ".join(texts))
+    return combined
 
 
 def _remove_noise_sections(text: str) -> str:
@@ -276,6 +364,25 @@ def _remove_noise_sections(text: str) -> str:
     if not cut_positions:
         return text
     return text[: min(cut_positions)].strip()
+
+
+def _remove_stop_words_from_text(text: str) -> str:
+    tokens = re.findall(r"[A-Za-z0-9+#\-/\.]+|[^\w\s]", text)
+    filtered_tokens = []
+    for token in tokens:
+        normalized = token.lower().strip(".,;:!?()[]{}\"'")
+        if normalized and normalized in STOP_WORDS:
+            continue
+        filtered_tokens.append(token)
+
+    filtered_text = " ".join(filtered_tokens)
+    filtered_text = re.sub(r"\s+([,.;:!?])", r"\1", filtered_text)
+    return _normalize_space(filtered_text)
+
+
+def _prepare_extracted_job_text(text: str) -> str:
+    noise_reduced = _remove_noise_sections(text)
+    return _remove_stop_words_from_text(noise_reduced)
 
 
 def _extract_tech_phrases(text: str) -> List[str]:
@@ -297,7 +404,7 @@ def extract_keywords_from_text(text: str, top_k: int = 12) -> List[str]:
 
     TODO(LLM): Replace with LLM-based or embedding-based keyphrase extraction.
     """
-    cleaned_text = _remove_noise_sections(text)
+    cleaned_text = _prepare_extracted_job_text(text)
     tech_matches = _extract_tech_phrases(cleaned_text)
     if len(tech_matches) >= top_k:
         return tech_matches[:top_k]
@@ -340,3 +447,20 @@ def resolve_job_text_and_keywords(
 
     keywords = extract_keywords_from_text(final_text)
     return final_text, keywords
+
+
+def resolve_job_summary_input(
+    job_description: Optional[str],
+    job_link: Optional[str],
+) -> str:
+    """
+    Resolve source text for summarization.
+
+    For job links, this intentionally returns the raw HTML page source so the
+    LLM can summarize from the full document instead of flattened extraction.
+    """
+    if job_description and len(job_description.strip()) >= 20:
+        return job_description.strip()
+    if not job_link:
+        raise ValueError("Provide either a job description or a valid job link.")
+    return fetch_job_html_from_url(job_link)

@@ -79,6 +79,16 @@ document.getElementById("btn-keywords").addEventListener("click", async () => {
   }
 });
 
+document.getElementById("btn-summary").addEventListener("click", async () => {
+  try {
+    const payload = readJobInputPayload();
+    const data = await postJson("/summarize-job", payload);
+    printResult("Job Summary", data);
+  } catch (err) {
+    printResult("Error", err.message);
+  }
+});
+
 document.getElementById("btn-draft").addEventListener("click", async () => {
   try {
     const formData = buildOutreachFormData();

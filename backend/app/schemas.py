@@ -39,6 +39,7 @@ class DraftEmailResponse(BaseModel):
     subject: str
     body: str
     evidence_used: List[EvidenceItem]
+    job_summary_prompt: Optional[str] = None
 
 
 class SendEmailResponse(BaseModel):
@@ -51,3 +52,12 @@ class JobExtractionResponse(BaseModel):
     keyword_count: int
     extracted_keywords: List[str]
     resolved_job_description_preview: str
+
+
+class JobSummaryResponse(BaseModel):
+    source: str
+    extracted_keywords: List[str]
+    summary: str
+    email_generation_prompt: str
+    llm_used: bool
+    llm_error: Optional[str] = None

@@ -11,6 +11,26 @@ cp .env.example .env
 python -m uvicorn app.main:app --reload --port 8000
 ```
 
+## LLM Provider Setup
+
+Use either OpenAI or Ollama for job summarization.
+
+OpenAI:
+
+```env
+OPENAI_API_KEY=your-api-key
+OPENAI_MODEL=gpt-4o-mini
+```
+
+Ollama:
+
+```env
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1
+```
+
+If `OLLAMA_MODEL` is set, the backend will try Ollama first, then OpenAI, then local fallback.
+
 ## API Endpoints
 
 - `GET /health`
