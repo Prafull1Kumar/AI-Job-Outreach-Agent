@@ -156,6 +156,7 @@ def summarize_job_for_email_prompt(
     job_text: str,
     extracted_keywords: Optional[List[str]] = None,
 ) -> JobSummaryResponse:
+    parsed_job = parse_job_description(job_text, extracted_keywords=extracted_keywords)
     summary_input = _prepare_job_summary_input(job_text)
     summary, prompt, source, llm_used, llm_error = _summarize_job_with_optional_llm(
         summary_input,
@@ -163,6 +164,8 @@ def summarize_job_for_email_prompt(
     )
     return JobSummaryResponse(
         source=source,
+        company_name=parsed_job.company,
+        job_name=parsed_job.role,
         extracted_keywords=extracted_keywords or [],
         summary=summary,
         email_generation_prompt=prompt,

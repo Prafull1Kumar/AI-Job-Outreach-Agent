@@ -58,8 +58,10 @@ class JobExtractionResponse(BaseModel):
 
 class JobSummaryResponse(BaseModel):
     source: str
+    company_name: str
+    job_name: str
     extracted_keywords: List[str]
-    summary: str
-    email_generation_prompt: str
+    summary: str = ""
+    email_generation_prompt: str = ""
     llm_used: bool
     llm_error: Optional[str] = None
