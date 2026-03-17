@@ -3,90 +3,119 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>AI Job Outreach Agent</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=4" />
   </head>
   <body>
-    <main class="shell">
-      <section class="hero">
-        <div class="hero-copy">
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
           <p class="eyebrow">AI Job Outreach Agent</p>
-          <h1>Turn a job link into a recruiter-ready outreach draft.</h1>
-          <p class="subtitle">
-            Pull the role and company, generate a structured draft, and send the current fallback email
-            without extra manual steps.
-          </p>
-          <div class="hero-flow">
-            <span class="flow-label">Current Flow</span>
-            <span class="flow-text">Summarize the job, generate the email, review the JSON output, then send.</span>
-          </div>
+          <h1>Job Link to Outreach</h1>
+          <p class="tagline">Parse the role, build the fallback draft, inspect the JSON, send the email.</p>
         </div>
-      </section>
+
+        <div class="topbar-note">
+          <span class="note-kicker">Current Mode</span>
+          <p>Single-screen workspace. Inputs stay left, live output stays right.</p>
+        </div>
+      </header>
 
       <section class="workspace">
         <form id="outreach-form" class="panel form-panel">
-          <div class="panel-header">
-            <h2>Input</h2>
-            <p>Recruiter details, source job posting, and resume context.</p>
-          </div>
-
-          <div class="form-grid">
-            <div class="field">
-              <label for="recruiter_name">Recruiter Name</label>
-              <input id="recruiter_name" required />
-            </div>
-
-            <div class="field">
-              <label for="recruiter_email">Recruiter Email</label>
-              <input id="recruiter_email" type="email" required />
+          <div class="panel-title">
+            <div>
+              <p class="section-kicker">Input</p>
+              <h2>Recruiter + Job Context</h2>
             </div>
           </div>
 
-          <div class="field">
-            <label for="recruiter_profile">Recruiter Profile</label>
-            <textarea id="recruiter_profile" rows="4" required></textarea>
+          <div class="panel-scroll">
+            <section class="input-section">
+              <div class="section-head">
+                <h3>Recruiter</h3>
+                <p>Who should receive the message.</p>
+              </div>
+              <div class="grid two-up">
+                <label class="field">
+                  <span>Recruiter Name</span>
+                  <input id="recruiter_name" required />
+                </label>
+                <label class="field">
+                  <span>Recruiter Email</span>
+                  <input id="recruiter_email" type="email" required />
+                </label>
+              </div>
+              <label class="field">
+                <span>Recruiter Profile</span>
+                <textarea id="recruiter_profile" rows="4" required placeholder="LinkedIn summary, notes, or context about the recruiter"></textarea>
+              </label>
+            </section>
+
+            <section class="input-section">
+              <div class="section-head">
+                <h3>Job</h3>
+                <p>Provide the job post link and optional raw description.</p>
+              </div>
+              <label class="field">
+                <span>Job Link</span>
+                <input id="job_link" type="url" placeholder="https://careers.company.com/job/123" />
+              </label>
+              <label class="field">
+                <span>Job Description</span>
+                <textarea id="job_description" rows="5" placeholder="Optional if the job link already contains enough detail"></textarea>
+              </label>
+            </section>
+
+            <section class="input-section resume-section">
+              <div class="section-head">
+                <h3>Resume</h3>
+                <p>Upload a file or paste resume text.</p>
+              </div>
+              <div class="grid two-up">
+                <label class="field upload-field">
+                  <span>Resume File</span>
+                  <div class="upload-box">
+                    <strong>Drop in a resume file</strong>
+                    <p>Accepted: PDF, DOCX, TXT</p>
+                    <input id="resume_file" type="file" accept=".pdf,.docx,.txt" />
+                  </div>
+                </label>
+                <label class="field">
+                  <span>Resume Text</span>
+                  <textarea id="resume_text" rows="5" placeholder="Optional fallback if no file is uploaded"></textarea>
+                </label>
+              </div>
+            </section>
           </div>
 
-          <div class="field">
-            <label for="job_link">Job Link</label>
-            <input id="job_link" type="url" placeholder="https://careers.company.com/job/123" />
-          </div>
-
-          <div class="field">
-            <label for="job_description">Job Description</label>
-            <textarea id="job_description" rows="7" placeholder="Optional if the job link is enough"></textarea>
-          </div>
-
-          <div class="form-grid">
-            <div class="field">
-              <label for="resume_file">Upload Resume</label>
-              <input id="resume_file" type="file" accept=".pdf,.docx,.txt" />
-            </div>
-
-            <div class="field">
-              <label for="resume_text">Resume Text</label>
-              <textarea id="resume_text" rows="8" placeholder="Optional fallback if no file is uploaded"></textarea>
-            </div>
-          </div>
-
-          <div class="actions">
-            <button type="button" id="btn-summary" class="button secondary">Summarize Job</button>
-            <button type="button" id="btn-generate-email" class="button">Generate Email</button>
-            <button type="button" id="btn-draft" class="button ghost">Draft Email</button>
-            <button type="button" id="btn-send" class="button danger">Send Email</button>
+          <div class="action-bar">
+            <button type="button" id="btn-summary" class="button button-muted">Summarize Job</button>
+            <button type="button" id="btn-generate-email" class="button button-primary">Generate Email</button>
+            <button type="button" id="btn-draft" class="button button-ghost">Draft Email</button>
+            <button type="button" id="btn-send" class="button button-success">Send Email</button>
           </div>
         </form>
 
-        <section class="panel output-panel">
-          <div class="panel-header">
-            <h2>Output</h2>
-            <p>Subject and body are returned here as JSON. This is the current email your backend will use.</p>
+        <aside class="panel output-panel">
+          <div class="panel-title output-title">
+            <div>
+              <p class="section-kicker">Output</p>
+              <h2>Result JSON</h2>
+            </div>
+            <span class="status-pill">Live Response</span>
           </div>
-          <pre id="output">Run an action to see results...</pre>
-        </section>
+
+          <div class="output-card">
+            <pre id="output">Run an action to see results...</pre>
+          </div>
+        </aside>
       </section>
     </main>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=4"></script>
   </body>
 </html>
