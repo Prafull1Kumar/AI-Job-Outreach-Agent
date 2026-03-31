@@ -36,3 +36,5 @@ env/
 node_modules/
 dist/
 build/
+
+/rag_design

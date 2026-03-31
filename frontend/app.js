@@ -1,6 +1,7 @@
 const API_BASE = "http://localhost:8000";
 
 const output = document.getElementById("output");
+let currentDraft = null;
 
 function readJobInputPayload() {
   return {
@@ -17,6 +18,8 @@ function buildOutreachFormData() {
   formData.append("job_link", document.getElementById("job_link").value || "");
   formData.append("job_description", document.getElementById("job_description").value || "");
   formData.append("resume_text", document.getElementById("resume_text").value || "");
+  formData.append("email_subject", currentDraft?.subject || "");
+  formData.append("email_body", currentDraft?.body || "");
 
   const resumeFileInput = document.getElementById("resume_file");
   if (resumeFileInput.files.length > 0) {
@@ -59,11 +62,25 @@ function printResult(title, data) {
   output.textContent = `${title}\n\n${JSON.stringify(data, null, 2)}`;
 }
 
+function printSummary(data) {
+  const summary = (data.summary || "").trim();
+  output.textContent = summary || "No job summary was generated.";
+}
+
+function storeCurrentDraft(data) {
+  if (data?.subject && data?.body) {
+    currentDraft = {
+      subject: data.subject,
+      body: data.body,
+    };
+  }
+}
+
 document.getElementById("btn-summary").addEventListener("click", async () => {
   try {
     const payload = readJobInputPayload();
     const data = await postJson("/summarize-job", payload);
-    printResult("Job Summary", data);
+    printSummary(data);
   } catch (err) {
     printResult("Error", err.message);
   }
@@ -73,6 +90,7 @@ document.getElementById("btn-generate-email").addEventListener("click", async ()
   try {
     const formData = buildOutreachFormData();
     const data = await postForm("/draft-email-upload", formData);
+    storeCurrentDraft(data);
     printResult("Generated Email", data);
   } catch (err) {
     printResult("Error", err.message);
@@ -83,6 +101,7 @@ document.getElementById("btn-draft").addEventListener("click", async () => {
   try {
     const formData = buildOutreachFormData();
     const data = await postForm("/draft-email-upload", formData);
+    storeCurrentDraft(data);
     printResult("Draft Email", data);
   } catch (err) {
     printResult("Error", err.message);
@@ -91,6 +110,9 @@ document.getElementById("btn-draft").addEventListener("click", async () => {
 
 document.getElementById("btn-send").addEventListener("click", async () => {
   try {
+    if (!currentDraft?.subject || !currentDraft?.body) {
+      throw new Error("Generate or draft the email before sending it.");
+    }
     const formData = buildOutreachFormData();
     const data = await postForm("/send-email-upload", formData);
     printResult("Send Email", data);

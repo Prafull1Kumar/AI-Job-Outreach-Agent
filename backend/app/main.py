@@ -87,6 +87,10 @@ def extract_keywords(payload: JobContentRequest) -> JobExtractionResponse:
 @app.post("/summarize-job", response_model=JobSummaryResponse)
 def summarize_job(payload: JobContentRequest) -> JobSummaryResponse:
     try:
+        job_summary_input = resolve_job_summary_input(
+            payload.job_description,
+            str(payload.job_link) if payload.job_link else None,
+        )
         job_text, extracted_keywords = resolve_job_text_and_keywords(
             payload.job_description,
             str(payload.job_link) if payload.job_link else None,
@@ -95,15 +99,16 @@ def summarize_job(payload: JobContentRequest) -> JobSummaryResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     parsed = parse_job_description(job_text, extracted_keywords=extracted_keywords)
+    summarized = summarize_job_for_email_prompt(job_summary_input, extracted_keywords)
     return JobSummaryResponse(
-        source="parsed",
+        source=summarized.source,
         company_name=parsed.company,
         job_name=parsed.role,
         extracted_keywords=extracted_keywords,
-        summary="",
-        email_generation_prompt="",
-        llm_used=False,
-        llm_error=None,
+        summary=summarized.summary,
+        email_generation_prompt=summarized.email_generation_prompt,
+        llm_used=summarized.llm_used,
+        llm_error=summarized.llm_error,
     )
 
 
@@ -136,6 +141,13 @@ def draft_email(payload: JobOutreachRequest) -> DraftEmailResponse:
 
 @app.post("/send-email", response_model=SendEmailResponse)
 def send_email(payload: JobOutreachRequest) -> SendEmailResponse:
+    if (payload.email_subject or "").strip() and (payload.email_body or "").strip():
+        return send_email_via_gmail(
+            payload.recruiter_email,
+            payload.email_subject.strip(),
+            payload.email_body.strip(),
+        )
+
     try:
         job_text, extracted_keywords = resolve_job_text_and_keywords(
             payload.job_description,
@@ -213,6 +225,9 @@ def send_email_upload(
     email_body: str = Form(""),
     resume_file: Optional[UploadFile] = File(None),
 ) -> SendEmailResponse:
+    if email_subject.strip() and email_body.strip():
+        return send_email_via_gmail(recruiter_email, email_subject.strip(), email_body.strip())
+
     try:
         final_job_text, extracted_keywords = resolve_job_text_and_keywords(
             job_description or None,

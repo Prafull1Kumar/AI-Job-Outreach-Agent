@@ -91,20 +91,24 @@ def draft_outreach_email(
     evidence: List[EvidenceItem],
     job_summary_prompt: Optional[str] = None,
 ) -> DraftEmailResponse:
-    """
-    Draft personalized recruiter outreach email.
+    subject = ""
+    body = ""
 
-    TODO(LLM): Replace this template generator with an LLM call using:
-    - recruiter profile
-    - parsed job JSON
-    - retrieved resume evidence
-    - strict style constraints (concise, professional, personalized)
-    """
-    subject, body = _build_dummy_outreach_email(
-        recruiter_name=recruiter_name,
-        recruiter_profile=recruiter_profile,
-        parsed_job=parsed_job,
-    )
+    try:
+        subject, body = _generate_email_with_optional_llm(
+            recruiter_name=recruiter_name,
+            recruiter_profile=recruiter_profile,
+            parsed_job=parsed_job,
+            evidence=evidence,
+            job_summary_prompt=job_summary_prompt,
+        )
+    except Exception:
+        subject, body = _build_dummy_outreach_email(
+            recruiter_name=recruiter_name,
+            recruiter_profile=recruiter_profile,
+            parsed_job=parsed_job,
+            evidence=evidence,
+        )
 
     return DraftEmailResponse(
         subject=subject,
@@ -118,10 +122,12 @@ def _build_dummy_outreach_email(
     recruiter_name: str,
     recruiter_profile: str,
     parsed_job: ParsedJob,
+    evidence: Optional[List[EvidenceItem]] = None,
 ) -> tuple[str, str]:
     greeting = recruiter_name.strip() if recruiter_name.strip() else "Hiring Team"
     profile_hint = recruiter_profile[:120].strip()
     company = parsed_job.company.strip() if parsed_job.company.strip() else "your team"
+    evidence = evidence or []
     intro_line = (
         f"I recently came across the {parsed_job.role} opportunity at {company} and was excited to learn more "
         "about your mission and the impact of your engineering team."
@@ -129,12 +135,20 @@ def _build_dummy_outreach_email(
     if profile_hint:
         intro_line += f" Your background ({profile_hint}...) also stood out to me."
 
+    evidence_line = ""
+    if evidence:
+        strongest = evidence[0].snippet[:220].strip()
+        evidence_line = (
+            " Based on my background, I believe my experience aligns well with the role, "
+            f"especially in areas such as {strongest}."
+        )
+
     subject = f"Application for {parsed_job.role} Role at {company}"
     body = f"""Hi {greeting},
 
 I hope you are doing well.
 
-{intro_line} The opportunity to contribute to scalable, reliable systems in this role is especially compelling.
+{intro_line} The opportunity to contribute to scalable, reliable systems in this role is especially compelling.{evidence_line}
 
 I have 5+ years of experience building scalable backend and full-stack applications, working with technologies such as Python, Node.js, React, TypeScript, APIs, distributed systems, and cloud-based workflows. In my recent roles and projects, I have built AI-powered systems, high-volume application workflows, data pipelines, and external integrations. I am currently pursuing my Master's in Computer Science at The University of Texas at Dallas, where I continue working on AI-driven and distributed systems projects.
 
@@ -149,6 +163,187 @@ prajapatiprafull12@gmail.com
 +1 (945) 268-5954
 """
 
+    return subject, body
+
+
+def _generate_email_with_optional_llm(
+    recruiter_name: str,
+    recruiter_profile: str,
+    parsed_job: ParsedJob,
+    evidence: List[EvidenceItem],
+    job_summary_prompt: Optional[str],
+) -> tuple[str, str]:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+    ollama_model = os.getenv("OLLAMA_MODEL", "").strip()
+    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
+
+    if api_key:
+        return _draft_email_with_openai(
+            recruiter_name,
+            recruiter_profile,
+            parsed_job,
+            evidence,
+            job_summary_prompt,
+            api_key,
+            model,
+        )
+
+    if ollama_model:
+        return _draft_email_with_ollama(
+            recruiter_name,
+            recruiter_profile,
+            parsed_job,
+            evidence,
+            job_summary_prompt,
+            ollama_base_url,
+            ollama_model,
+        )
+
+    raise RuntimeError("No LLM provider configured for email drafting. Set OPENAI_API_KEY or OLLAMA_MODEL.")
+
+
+def _draft_email_with_openai(
+    recruiter_name: str,
+    recruiter_profile: str,
+    parsed_job: ParsedJob,
+    evidence: List[EvidenceItem],
+    job_summary_prompt: Optional[str],
+    api_key: str,
+    model: str,
+) -> tuple[str, str]:
+    system_prompt = (
+        "You write concise recruiter outreach emails. "
+        "Return strict JSON with keys: subject, body. "
+        "The email must be factual, personalized, under 190 words, and grounded only in the provided evidence. "
+        "Do not invent experience not supported by the retrieved resume snippets."
+    )
+    payload = _build_email_generation_payload(
+        recruiter_name,
+        recruiter_profile,
+        parsed_job,
+        evidence,
+        job_summary_prompt,
+    )
+
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "temperature": 0.3,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+        },
+        timeout=45,
+    )
+    response.raise_for_status()
+    content = response.json()["choices"][0]["message"]["content"]
+    parsed = _parse_llm_json_response(content)
+    return _extract_email_fields(parsed)
+
+
+def _draft_email_with_ollama(
+    recruiter_name: str,
+    recruiter_profile: str,
+    parsed_job: ParsedJob,
+    evidence: List[EvidenceItem],
+    job_summary_prompt: Optional[str],
+    base_url: str,
+    model: str,
+) -> tuple[str, str]:
+    system_prompt = (
+        "You write concise recruiter outreach emails. "
+        "Return strict JSON with keys: subject, body. "
+        "Keep the email factual, under 190 words, grounded only in provided resume evidence."
+    )
+    timeout_seconds = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
+    payload = _build_email_generation_payload(
+        recruiter_name,
+        recruiter_profile,
+        parsed_job,
+        evidence,
+        job_summary_prompt,
+    )
+
+    response = requests.post(
+        f"{base_url.rstrip('/')}/api/generate",
+        json={
+            "model": model,
+            "stream": False,
+            "format": "json",
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 400,
+            },
+            "system": system_prompt,
+            "prompt": json.dumps(payload),
+        },
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+    content = response.json().get("response", "")
+    parsed = _parse_llm_json_response(content)
+    return _extract_email_fields(parsed)
+
+
+def _build_email_generation_payload(
+    recruiter_name: str,
+    recruiter_profile: str,
+    parsed_job: ParsedJob,
+    evidence: List[EvidenceItem],
+    job_summary_prompt: Optional[str],
+) -> dict:
+    return {
+        "candidate": {
+            "name": "Prafull Kumar Prajapati",
+            "location": "Richardson, TX",
+            "email": "prajapatiprafull12@gmail.com",
+            "phone": "+1 (945) 268-5954",
+        },
+        "target": {
+            "recruiter_name": recruiter_name,
+            "recruiter_profile": recruiter_profile,
+            "company": parsed_job.company,
+            "role": parsed_job.role,
+            "requirements": parsed_job.key_requirements,
+            "seniority": parsed_job.seniority,
+        },
+        "job_summary_prompt": job_summary_prompt or "",
+        "resume_evidence": [
+            {
+                "snippet": item.snippet,
+                "score": item.relevance_score,
+            }
+            for item in evidence[:4]
+        ],
+        "instructions": {
+            "tone": "professional, direct, personalized",
+            "constraints": [
+                "Keep the body under 190 words",
+                "Mention alignment with the role and company",
+                "Use retrieved resume evidence directly",
+                "End with a short call to action",
+            ],
+            "output_schema": {
+                "subject": "string",
+                "body": "string",
+            },
+        },
+    }
+
+
+def _extract_email_fields(parsed: dict) -> tuple[str, str]:
+    subject = str(parsed.get("subject", "")).strip()
+    body = str(parsed.get("body", "")).strip()
+    if not subject or not body:
+        raise ValueError("LLM response missing subject or body")
     return subject, body
 
 
@@ -178,11 +373,18 @@ def _summarize_job_with_optional_llm(
     job_text: str,
     extracted_keywords: List[str],
 ) -> tuple[str, str, str, bool, Optional[str]]:
-    ollama_model = os.getenv("OLLAMA_MODEL", "").strip()
-    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+    ollama_model = os.getenv("OLLAMA_MODEL", "").strip()
+    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
     errors: List[str] = []
+
+    if api_key:
+        try:
+            summary, prompt, llm_used = _summarize_job_with_openai(job_text, extracted_keywords, api_key, model)
+            return summary, prompt, "openai", llm_used, None
+        except Exception as exc:
+            errors.append(f"OpenAI: {exc}")
 
     if ollama_model:
         try:
@@ -196,16 +398,9 @@ def _summarize_job_with_optional_llm(
         except Exception as exc:
             errors.append(f"Ollama: {exc}")
 
-    if api_key:
-        try:
-            summary, prompt, llm_used = _summarize_job_with_openai(job_text, extracted_keywords, api_key, model)
-            return summary, prompt, "openai", llm_used, None
-        except Exception as exc:
-            errors.append(f"OpenAI: {exc}")
-
     summary, prompt, llm_used = _fallback_job_summary(job_text, extracted_keywords)
     if not ollama_model and not api_key:
-        errors.append("No LLM provider configured. Set OLLAMA_MODEL or OPENAI_API_KEY.")
+        errors.append("No LLM provider configured. Set OPENAI_API_KEY or OLLAMA_MODEL.")
     return summary, prompt, "fallback", llm_used, " | ".join(errors) if errors else None
 
 
