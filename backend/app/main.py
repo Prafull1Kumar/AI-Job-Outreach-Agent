@@ -48,6 +48,34 @@ def _resolve_current_email(
     return subject, body
 
 
+def _build_retrieval_query(
+    parsed_job: ParsedJob,
+    recruiter_profile: str,
+    job_summary: JobSummaryResponse,
+) -> str:
+    parts = [
+        parsed_job.role,
+        parsed_job.company,
+        " ".join(parsed_job.key_requirements),
+        recruiter_profile.strip(),
+    ]
+
+    structured = job_summary.structured_summary or {}
+    for key in ["role_overview", "company_overview"]:
+        value = structured.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+
+    for key in ["key_responsibilities", "requirements"]:
+        value = structured.get(key)
+        if isinstance(value, list):
+            parts.append(" ".join(str(item).strip() for item in value if str(item).strip()))
+        elif isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+
+    return " ".join(part for part in parts if part).strip()
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -106,6 +134,7 @@ def summarize_job(payload: JobContentRequest) -> JobSummaryResponse:
         job_name=parsed.role,
         extracted_keywords=extracted_keywords,
         summary=summarized.summary,
+        structured_summary=summarized.structured_summary,
         email_generation_prompt=summarized.email_generation_prompt,
         llm_used=summarized.llm_used,
         llm_error=summarized.llm_error,
@@ -128,7 +157,7 @@ def draft_email(payload: JobOutreachRequest) -> DraftEmailResponse:
 
     parsed = parse_job_description(job_text, extracted_keywords=extracted_keywords)
     job_summary = summarize_job_for_email_prompt(job_summary_input, extracted_keywords)
-    retrieval_query = f"{parsed.role} {' '.join(parsed.key_requirements)} {payload.recruiter_profile}"
+    retrieval_query = _build_retrieval_query(parsed, payload.recruiter_profile, job_summary)
     evidence = retrieve_resume_evidence(retrieval_query, payload.resume_text)
     return draft_outreach_email(
         recruiter_name=payload.recruiter_name,
@@ -194,7 +223,7 @@ def draft_email_upload(
 
     parsed = parse_job_description(final_job_text, extracted_keywords=extracted_keywords)
     job_summary = summarize_job_for_email_prompt(job_summary_input, extracted_keywords)
-    retrieval_query = f"{parsed.role} {' '.join(parsed.key_requirements)} {recruiter_profile}"
+    retrieval_query = _build_retrieval_query(parsed, recruiter_profile, job_summary)
     evidence = retrieve_resume_evidence(retrieval_query, final_resume_text)
 
     draft = draft_outreach_email(

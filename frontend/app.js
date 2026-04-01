@@ -63,6 +63,11 @@ function printResult(title, data) {
 }
 
 function printSummary(data) {
+  if (data.structured_summary) {
+    output.textContent = JSON.stringify(data.structured_summary, null, 2);
+    return;
+  }
+
   const summary = (data.summary || "").trim();
   output.textContent = summary || "No job summary was generated.";
 }

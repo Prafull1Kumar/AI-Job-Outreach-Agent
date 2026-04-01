@@ -191,14 +191,16 @@ def _reciprocal_rank_fusion(
     dense_hits: List[Tuple[int, float]],
     sparse_hits: List[Tuple[int, float]],
     k: int = 60,
+    dense_weight: float = 0.7,
+    sparse_weight: float = 0.3,
 ) -> List[Tuple[int, float]]:
     fused: Dict[int, float] = {}
 
     for rank, (idx, _) in enumerate(dense_hits, start=1):
-        fused[idx] = fused.get(idx, 0.0) + 1.0 / (k + rank)
+        fused[idx] = fused.get(idx, 0.0) + dense_weight * 1.0 / (k + rank)
 
     for rank, (idx, _) in enumerate(sparse_hits, start=1):
-        fused[idx] = fused.get(idx, 0.0) + 1.0 / (k + rank)
+        fused[idx] = fused.get(idx, 0.0) + sparse_weight * 1.0 / (k + rank)
 
     return sorted(fused.items(), key=lambda item: item[1], reverse=True)
 

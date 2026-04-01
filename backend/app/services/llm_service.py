@@ -1,13 +1,18 @@
+import ast
 import json
 import os
 import re
 from html import unescape
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from bs4 import BeautifulSoup
 
 from app.schemas import DraftEmailResponse, EvidenceItem, JobSummaryResponse, ParsedJob
+
+
+def _normalize_space(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def parse_job_description(
@@ -175,8 +180,6 @@ def _generate_email_with_optional_llm(
 ) -> tuple[str, str]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
-    ollama_model = os.getenv("OLLAMA_MODEL", "").strip()
-    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
 
     if api_key:
         return _draft_email_with_openai(
@@ -189,18 +192,7 @@ def _generate_email_with_optional_llm(
             model,
         )
 
-    if ollama_model:
-        return _draft_email_with_ollama(
-            recruiter_name,
-            recruiter_profile,
-            parsed_job,
-            evidence,
-            job_summary_prompt,
-            ollama_base_url,
-            ollama_model,
-        )
-
-    raise RuntimeError("No LLM provider configured for email drafting. Set OPENAI_API_KEY or OLLAMA_MODEL.")
+    raise RuntimeError("No LLM provider configured for email drafting. Set OPENAI_API_KEY.")
 
 
 def _draft_email_with_openai(
@@ -245,50 +237,6 @@ def _draft_email_with_openai(
     )
     response.raise_for_status()
     content = response.json()["choices"][0]["message"]["content"]
-    parsed = _parse_llm_json_response(content)
-    return _extract_email_fields(parsed)
-
-
-def _draft_email_with_ollama(
-    recruiter_name: str,
-    recruiter_profile: str,
-    parsed_job: ParsedJob,
-    evidence: List[EvidenceItem],
-    job_summary_prompt: Optional[str],
-    base_url: str,
-    model: str,
-) -> tuple[str, str]:
-    system_prompt = (
-        "You write concise recruiter outreach emails. "
-        "Return strict JSON with keys: subject, body. "
-        "Keep the email factual, under 190 words, grounded only in provided resume evidence."
-    )
-    timeout_seconds = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
-    payload = _build_email_generation_payload(
-        recruiter_name,
-        recruiter_profile,
-        parsed_job,
-        evidence,
-        job_summary_prompt,
-    )
-
-    response = requests.post(
-        f"{base_url.rstrip('/')}/api/generate",
-        json={
-            "model": model,
-            "stream": False,
-            "format": "json",
-            "options": {
-                "temperature": 0.3,
-                "num_predict": 400,
-            },
-            "system": system_prompt,
-            "prompt": json.dumps(payload),
-        },
-        timeout=timeout_seconds,
-    )
-    response.raise_for_status()
-    content = response.json().get("response", "")
     parsed = _parse_llm_json_response(content)
     return _extract_email_fields(parsed)
 
@@ -357,12 +305,14 @@ def summarize_job_for_email_prompt(
         summary_input,
         extracted_keywords or [],
     )
+    structured_summary = structure_job_summary(summary)
     return JobSummaryResponse(
         source=source,
         company_name=parsed_job.company,
         job_name=parsed_job.role,
         extracted_keywords=extracted_keywords or [],
-        summary=summary,
+        summary=json.dumps(structured_summary, indent=2) if structured_summary else summary,
+        structured_summary=structured_summary,
         email_generation_prompt=prompt,
         llm_used=llm_used,
         llm_error=llm_error,
@@ -375,8 +325,6 @@ def _summarize_job_with_optional_llm(
 ) -> tuple[str, str, str, bool, Optional[str]]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
-    ollama_model = os.getenv("OLLAMA_MODEL", "").strip()
-    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
     errors: List[str] = []
 
     if api_key:
@@ -386,21 +334,9 @@ def _summarize_job_with_optional_llm(
         except Exception as exc:
             errors.append(f"OpenAI: {exc}")
 
-    if ollama_model:
-        try:
-            summary, prompt, llm_used = _summarize_job_with_ollama(
-                job_text,
-                extracted_keywords,
-                ollama_base_url,
-                ollama_model,
-            )
-            return summary, prompt, "ollama", llm_used, None
-        except Exception as exc:
-            errors.append(f"Ollama: {exc}")
-
     summary, prompt, llm_used = _fallback_job_summary(job_text, extracted_keywords)
-    if not ollama_model and not api_key:
-        errors.append("No LLM provider configured. Set OPENAI_API_KEY or OLLAMA_MODEL.")
+    if not api_key:
+        errors.append("No LLM provider configured. Set OPENAI_API_KEY.")
     return summary, prompt, "fallback", llm_used, " | ".join(errors) if errors else None
 
 
@@ -475,63 +411,6 @@ def _summarize_job_with_openai(
     return summary, email_generation_prompt, True
 
 
-def _summarize_job_with_ollama(
-    job_text: str,
-    extracted_keywords: List[str],
-    base_url: str,
-    model: str,
-) -> tuple[str, str, bool]:
-    compact_job_text = _truncate_for_local_model(job_text)
-    timeout_seconds = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
-    system_prompt = (
-        "You summarize job postings for outreach-email generation. "
-        "Return strict JSON with keys: summary, email_generation_prompt. "
-        "The summary must use these exact section headers: Company Overview, Role Overview, "
-        "Key Responsibilities, Requirements, Engineering Culture & Benefits. "
-        "Ignore scripts, tracking, legal boilerplate, and application form content."
-    )
-    user_prompt = {
-        "job_text": compact_job_text,
-        "extracted_keywords": extracted_keywords,
-        "instructions": {
-            "summary_style": (
-                "Keep it factual and concise. Focus on role, technologies, responsibilities, "
-                "requirements, and relevant benefits/culture."
-            ),
-            "email_generation_prompt": (
-                "Write a prompt for generating a professional recruiter outreach email using the summary."
-            ),
-        },
-    }
-
-    response = requests.post(
-        f"{base_url.rstrip('/')}/api/generate",
-        json={
-            "model": model,
-            "stream": False,
-            "format": "json",
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 450,
-            },
-            "system": system_prompt,
-            "prompt": json.dumps(user_prompt),
-        },
-        timeout=timeout_seconds,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    content = payload.get("response", "")
-    parsed = _parse_llm_json_response(content)
-
-    summary = str(parsed.get("summary", "")).strip()
-    email_generation_prompt = str(parsed.get("email_generation_prompt", "")).strip()
-    if not summary or not email_generation_prompt:
-        raise ValueError("Ollama response missing summary or email_generation_prompt")
-
-    return summary, email_generation_prompt, True
-
-
 def _fallback_job_summary(job_text: str, extracted_keywords: List[str]) -> tuple[str, str, bool]:
     normalized_text = re.sub(r"\s+", " ", job_text).strip()
     sentences = re.split(r"(?<=[.!?])\s+", normalized_text)
@@ -552,6 +431,120 @@ def _fallback_job_summary(job_text: str, extracted_keywords: List[str]) -> tuple
         "- End with a short call to action."
     )
     return summary, prompt, False
+
+
+def structure_job_summary(summary: str) -> Optional[Dict[str, Any]]:
+    cleaned = (summary or "").strip()
+    if not cleaned:
+        return None
+
+    parsed_object = _parse_summary_as_object(cleaned)
+    if parsed_object:
+        return _normalize_structured_summary(parsed_object)
+
+    parsed_sections = _parse_summary_sections(cleaned)
+    if parsed_sections:
+        return _normalize_structured_summary(parsed_sections)
+
+    return None
+
+
+def _parse_summary_as_object(summary: str) -> Optional[Dict[str, Any]]:
+    try:
+        parsed = json.loads(summary)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        parsed = ast.literal_eval(summary)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    return None
+
+
+def _parse_summary_sections(summary: str) -> Optional[Dict[str, Any]]:
+    section_map = {
+        "Company Overview": "company_overview",
+        "Role Overview": "role_overview",
+        "Key Responsibilities": "key_responsibilities",
+        "Requirements": "requirements",
+        "Engineering Culture & Benefits": "engineering_culture_and_benefits",
+    }
+    result: Dict[str, Any] = {}
+
+    pattern = re.compile(
+        r"(Company Overview|Role Overview|Key Responsibilities|Requirements|Engineering Culture & Benefits)\s*:?",
+        re.IGNORECASE,
+    )
+    matches = list(pattern.finditer(summary))
+    if not matches:
+        return None
+
+    for idx, match in enumerate(matches):
+        raw_key = match.group(1)
+        normalized_key = next(
+            value for key, value in section_map.items() if key.lower() == raw_key.lower()
+        )
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(summary)
+        content = summary[start:end].strip(" \n:-")
+        if not content:
+            continue
+
+        if normalized_key in {"key_responsibilities", "requirements"}:
+            result[normalized_key] = _split_summary_list(content)
+        else:
+            result[normalized_key] = _normalize_space(content)
+
+    return result or None
+
+
+def _split_summary_list(content: str) -> List[str]:
+    lines = [line.strip(" -•\t") for line in content.splitlines() if line.strip(" -•\t")]
+    if len(lines) > 1:
+        return lines
+
+    parts = [part.strip() for part in re.split(r"\s*[;•]\s*|\.\s+(?=[A-Z])", content) if part.strip()]
+    return parts or [_normalize_space(content)]
+
+
+def _normalize_structured_summary(data: Dict[str, Any]) -> Dict[str, Any]:
+    key_map = {
+        "Company Overview": "company_overview",
+        "Role Overview": "role_overview",
+        "Key Responsibilities": "key_responsibilities",
+        "Requirements": "requirements",
+        "Engineering Culture & Benefits": "engineering_culture_and_benefits",
+        "company_overview": "company_overview",
+        "role_overview": "role_overview",
+        "key_responsibilities": "key_responsibilities",
+        "requirements": "requirements",
+        "engineering_culture_and_benefits": "engineering_culture_and_benefits",
+    }
+    normalized: Dict[str, Any] = {}
+
+    for raw_key, value in data.items():
+        normalized_key = key_map.get(str(raw_key), str(raw_key).strip().lower().replace(" ", "_"))
+        if normalized_key in {"key_responsibilities", "requirements"}:
+            if isinstance(value, list):
+                normalized[normalized_key] = [_normalize_space(str(item)) for item in value if str(item).strip()]
+            else:
+                normalized[normalized_key] = _split_summary_list(str(value))
+            continue
+
+        if isinstance(value, dict):
+            normalized[normalized_key] = {
+                str(k).strip().lower().replace(" ", "_"): v for k, v in value.items()
+            }
+        else:
+            normalized[normalized_key] = _normalize_space(str(value))
+
+    return normalized
 
 
 def _parse_llm_json_response(content: str) -> dict:

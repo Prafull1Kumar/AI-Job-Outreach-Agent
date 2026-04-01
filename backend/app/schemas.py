@@ -1,5 +1,5 @@
 from pydantic import AnyHttpUrl, BaseModel, EmailStr, Field, model_validator
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class JobContentRequest(BaseModel):
@@ -62,6 +62,7 @@ class JobSummaryResponse(BaseModel):
     job_name: str
     extracted_keywords: List[str]
     summary: str = ""
+    structured_summary: Optional[Dict[str, Any]] = None
     email_generation_prompt: str = ""
     llm_used: bool
     llm_error: Optional[str] = None
